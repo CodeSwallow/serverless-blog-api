@@ -1,0 +1,14 @@
+{
+  "resource": "/posts/{slug}",
+  "path": "/posts/test-post",
+  "httpMethod": "DELETE",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "queryStringParameters": null,
+  "pathParameters": {
+    "slug": "test-post"
+  },
+  "body": null,
+  "isBase64Encoded": false
+}

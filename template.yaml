@@ -1,0 +1,589 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  serverless-blog
+
+  Sample SAM Template for serverless-blog
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 10
+    MemorySize: 128
+
+Parameters:
+  ReadCapacityUnits:
+    Description: Provisioned read throughput
+    Type: Number
+    Default: 5
+    MinValue: 5
+    MaxValue: 10
+    ConstraintDescription: must be between 5 and 10000
+  WriteCapacityUnits:
+    Description: Provisioned write throughput
+    Type: Number
+    Default: 10
+    MinValue: 5
+    MaxValue: 10
+    ConstraintDescription: must be between 5 and 10000
+
+Conditions:
+  IsProd: !Equals [!Ref AWS::StackName , 'serverless-blog-prod']
+  IsFeature: !Equals [!Ref AWS::StackName , 'serverless-blog-feature']
+
+Resources:
+  RestAPI:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !If [IsFeature, !Join [ '-', ['Feature', ServerlessBlog] ], !If [IsProd, ServerlessBlog, !Join [ '-', ['Dev', ServerlessBlog] ]]]
+      Description: Rest API for serverless blog backend
+      StageName: !If [IsProd, 'prod', 'dev']
+      BinaryMediaTypes:
+        - 'multipart/form-data'
+      Cors:
+        AllowOrigin: "'*'"
+        AllowHeaders: "'*'"
+        AllowMethods: "'*'"
+        MaxAge: "'300'"
+      Auth:
+        DefaultAuthorizer: TokenAuthorizer
+        Authorizers:
+          TokenAuthorizer:
+            FunctionPayloadType: TOKEN
+            FunctionArn: !GetAtt TokenAuthorizerFunction.Arn
+
+  TokenAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !If [IsFeature, !Join [ '-', ['Feature', TokenAuthorizerFunction] ], !If [IsProd, TokenAuthorizerFunction, !Join [ '-', ['Dev', TokenAuthorizerFunction] ]]]
+      Description: Token authorizer
+      CodeUri: blog_api/
+      Handler: token_authorizer.token_authorizer_handler
+      Runtime: python3.9
+
+  RetrievePostFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !If [IsFeature, !Join [ '-', ['Feature', RetrievePostFunction] ], !If [IsProd, RetrievePostFunction, !Join [ '-', ['Dev', RetrievePostFunction] ]]]
+      Description: Retrieve a post
+      CodeUri: blog_api/
+      Handler: retrieve_post.retrieve_post_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          POSTS_TABLE: !Ref PostsTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestAPI
+            Path: /posts/{slug}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+
+  ListPostsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !If [IsFeature, !Join [ '-', ['Feature', ListPostsFunction] ], !If [IsProd, ListPostsFunction, !Join [ '-', ['Dev', ListPostsFunction] ]]]
+      Description: List all posts
+      CodeUri: blog_api/
+      Handler: list_posts.list_posts_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          POSTS_TABLE: !Ref PostsTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestAPI
+            Path: /posts
+            Method: GET
+            Auth:
+              Authorizer: NONE
+
+  UpdatePostFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !If [IsFeature, !Join [ '-', ['Feature', UpdatePostFunction] ], !If [IsProd, UpdatePostFunction, !Join [ '-', ['Dev', UpdatePostFunction] ]]]
+      Description: Update a post
+      CodeUri: blog_api/
+      Handler: update_post.update_post_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          POSTS_TABLE: !Ref PostsTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestAPI
+            Path: /posts/{slug}
+            Method: PUT
+
+  DeletePostFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !If [IsFeature, !Join [ '-', ['Feature', DeletePostFunction] ], !If [IsProd, DeletePostFunction, !Join [ '-', ['Dev', DeletePostFunction] ]]]
+      Description: Delete a post
+      CodeUri: blog_api/
+      Handler: delete_post.delete_post_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          POSTS_TABLE: !Ref PostsTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestAPI
+            Path: /posts/{slug}
+            Method: DELETE
+
+  UploadImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !If [IsFeature, !Join [ '-', ['Feature', UploadImageFunction] ], !If [IsProd, UploadImageFunction, !Join [ '-', ['Dev', UploadImageFunction] ]]]
+      Description: Upload an image to S3
+      CodeUri: blog_api/
+      Handler: upload_image.upload_image_handler
+      Runtime: python3.9
+      Role: !GetAtt UploadImageToBucketRole.Arn
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          POSTS_BUCKET: !Ref PostsImagesBucket
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestAPI
+            Path: /posts/images
+            Method: POST
+
+  ValidatePostFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !If [IsFeature, !Join [ '-', ['Feature', ValidatePostFunction] ], !If [IsProd, ValidatePostFunction, !Join [ '-', ['Dev', ValidatePostFunction] ]]]
+      Description: Create a post
+      CodeUri: blog_api/
+      Handler: validate_post.validate_post_handler
+      Runtime: python3.9
+      Role: !GetAtt InvokeStateMachineRole.Arn
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          STATE_MACHINE: !Ref MarkDownWorkFlowStateMachine
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestAPI
+            Path: /posts
+            Method: POST
+
+  SanitizeMarkdownFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !If [IsFeature, !Join [ '-', ['Feature', SanitizeMarkdownFunction] ], !If [IsProd, SanitizeMarkdownFunction, !Join [ '-', ['Dev', SanitizeMarkdownFunction] ]]]
+      Description: Sanitize markdown
+      CodeUri: blog_api/
+      Handler: sanitize_markdown.sanitize_markdown_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+
+  MarkdownToHtmlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !If [IsFeature, !Join [ '-', ['Feature', MarkdownToHtmlFunction] ], !If [IsProd, MarkdownToHtmlFunction, !Join [ '-', ['Dev', MarkdownToHtmlFunction] ]]]
+      Description: Markdown to HTML
+      CodeUri: blog_api/
+      Handler: markdown_to_html.markdown_to_html_handler
+      Runtime: python3.9
+      Role: !GetAtt MarkdownToHtmlRole.Arn
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          POSTS_TABLE: !Ref PostsTable
+          POSTS_BUCKET: !Ref PostsHtmlBucket
+
+  PostCreationTopicFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !If [IsFeature, !Join [ '-', ['Feature', PostCreationTopicFunction] ], !If [IsProd, PostCreationTopicFunction, !Join [ '-', ['Dev', PostCreationTopicFunction] ]]]
+      Description: Post creation topic
+      CodeUri: blog_api/
+      Handler: post_creation_topic.post_creation_topic_handler
+      Runtime: python3.9
+      Timeout: 30
+      Role: !GetAtt ConfirmSubscriptionRole.Arn
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          TOPIC_ARN: !Ref PostCreationSNSTopic
+      Events:
+        Sns:
+          Type: SNS
+          Properties:
+            Topic: !Ref PostCreationSNSTopic
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestAPI
+            Path: /topics
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+  PostCreationSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !If [IsFeature, !Join [ '-', ['Feature', PostCreationSNSTopic] ], !If [IsProd, PostCreationSNSTopic, !Join [ '-', ['Dev', PostCreationSNSTopic] ]]]
+      DisplayName: Post creation SNS topic
+
+  MarkDownWorkFlowStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !If [IsFeature, !Join [ '-', ['Feature', MarkDownWorkFlowStateMachine] ], !If [IsProd, MarkDownWorkFlowStateMachine, !Join [ '-', ['Dev', MarkDownWorkFlowStateMachine] ]]]
+      Definition:
+        StartAt: SanitizeMarkdown
+        States:
+          SanitizeMarkdown:
+            Type: Task
+            Resource: !GetAtt SanitizeMarkdownFunction.Arn
+            Next: MarkdownToHtml
+            Catch:
+              - ErrorEquals:
+                  - MissingFieldError
+                Next: MissingFieldFailure
+              - ErrorEquals:
+                  - States.ALL
+                Next: CatchAllFailure
+          MarkdownToHtml:
+            Type: Task
+            Resource: !GetAtt MarkdownToHtmlFunction.Arn
+            Next: PublishToTopic
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                Next: CatchAllFailure
+          PublishToTopic:
+            Type: Task
+            Resource: "arn:aws:states:::sns:publish"
+            Parameters:
+              TopicArn: !Ref PostCreationSNSTopic
+              Message: "Post created successfully"
+            End: true
+          MissingFieldFailure:
+            Type: Fail
+            Cause: "Missing field"
+          CatchAllFailure:
+            Type: Fail
+            Cause: "Error occurred"
+      Role: !GetAtt MarkDownWorkFlowStateMachineRole.Arn
+
+  PostsImagesBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AccessControl: PublicRead
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+            AllowedOrigins:
+              - '*'
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 30
+            Status: Enabled
+
+  PostsHtmlBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AccessControl: PublicRead
+
+  PostsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !If [IsFeature, !Join [ '-', ['Feature', PostsTable] ], !If [IsProd, PostsTable, !Join [ '-', ['Dev', PostsTable] ]]]
+      AttributeDefinitions:
+        - AttributeName: PostID
+          AttributeType: S
+        - AttributeName: Author
+          AttributeType: S
+        - AttributeName: DateCreated
+          AttributeType: S
+        - AttributeName: Slug
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PostID
+          KeyType: HASH
+        - AttributeName: Author
+          KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: !Ref ReadCapacityUnits
+        WriteCapacityUnits: !Ref WriteCapacityUnits
+      LocalSecondaryIndexes:
+        - IndexName: SlugIndex
+          KeySchema:
+            - AttributeName: PostID
+              KeyType: HASH
+            - AttributeName: Slug
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      GlobalSecondaryIndexes:
+        - IndexName: DateCreatedIndex
+          KeySchema:
+            - AttributeName: DateCreated
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: !Ref ReadCapacityUnits
+            WriteCapacityUnits: !Ref WriteCapacityUnits
+
+  UpdatePostToPostsTableConnector:
+    Type: AWS::Serverless::Connector
+    Properties:
+      Source:
+        Id: UpdatePostFunction
+      Destination:
+        Id: PostsTable
+      Permissions:
+        - Write
+
+  DeletePostToPostsTableConnector:
+    Type: AWS::Serverless::Connector
+    Properties:
+      Source:
+        Id: DeletePostFunction
+      Destination:
+        Id: PostsTable
+      Permissions:
+        - Write
+
+  ListPostsToPostsTableConnector:
+    Type: AWS::Serverless::Connector
+    Properties:
+      Source:
+        Id: ListPostsFunction
+      Destination:
+        Id: PostsTable
+      Permissions:
+        - Read
+
+  RetrievePostToPostsTableConnector:
+    Type: AWS::Serverless::Connector
+    Properties:
+      Source:
+        Id: RetrievePostFunction
+      Destination:
+        Id: PostsTable
+      Permissions:
+        - Read
+
+  MarkdownHtmlToPostsTableConnector:
+    Type: AWS::Serverless::Connector
+    Properties:
+      Source:
+        Id: MarkdownToHtmlFunction
+      Destination:
+        Id: PostsTable
+      Permissions:
+        - Write
+
+  InvokeStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: InvokeStateMachineRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeStateMachineRolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref MarkDownWorkFlowStateMachine
+        - PolicyName: WriteLogs
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  UploadImageToBucketRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: UploadImageToBucketRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: UploadImageToBucketRolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource:
+                  - !Sub arn:aws:s3:::${PostsImagesBucket}/*
+                  - !Sub arn:aws:s3:::${PostsImagesBucket}
+        - PolicyName: WriteLogs
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  MarkdownToHtmlRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: MarkdownToHtmlRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: MarkdownToHtmlRolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource:
+                  - !Sub arn:aws:s3:::${PostsHtmlBucket}/*
+                  - !Sub arn:aws:s3:::${PostsHtmlBucket}
+        - PolicyName: PutDynamoDBItem
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  - !GetAtt PostsTable.Arn
+        - PolicyName: WriteLogs
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  ConfirmSubscriptionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ConfirmSubscriptionRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: ConfirmSubscriptionRolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:ConfirmSubscription
+                Resource:
+                  - !Ref PostCreationSNSTopic
+
+  MarkDownWorkFlowStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: MarkDownWorkFlowStateMachineRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - states.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: MarkDownWorkFlowStateMachineRolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt SanitizeMarkdownFunction.Arn
+                  - !GetAtt MarkdownToHtmlFunction.Arn
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref PostCreationSNSTopic
+
+Outputs:
+  ServerlessRestApi:
+    Description: "API Gateway endpoint URL for the Serverless functions"
+    Value: !Join ['/', [!Sub "https://${RestAPI}.execute-api.${AWS::Region}.amazonaws.com", !If [IsProd, 'prod', 'dev']]]

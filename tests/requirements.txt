@@ -1,0 +1,4 @@
+pytest
+boto3~=1.26.105
+python-slugify~=8.0.1
+moto~=4.1.6

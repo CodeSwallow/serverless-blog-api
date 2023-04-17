@@ -1,0 +1,12 @@
+{
+  "body": "{\"name\": \"Super Post\"}",
+  "resource": "/posts",
+  "path": "/posts",
+  "httpMethod": "POST",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "queryStringParameters": null,
+  "pathParameters": null,
+  "isBase64Encoded": false
+}
